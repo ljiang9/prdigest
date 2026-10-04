@@ -1,0 +1,19 @@
+{
+  "pr": {
+    "number": 3764,
+    "title": "Percent-encode pipe character in URL paths",
+    "state": "closed",
+    "body": "Fixes #3565.\n\nThe `|` character wasn't being percent-encoded in path segments, even though it's not a valid `pchar` per RFC 3986. Some servers reject or redirect URLs that contain an unencoded pipe — which is what the original reporter ran into (getting a 301 redirect when switching from `requests` to `httpx`).\n\nThis removes `|` (U+007C) from the `PATH_SAFE` set so it gets encoded as `%7C`, matching the behavior of Python's `urllib.parse.quote` and the `requests` library.\n\nThe WHATWG URL spec technically allows `|` unencoded in paths, so I've skipped the 3 WHATWG conformance test cases that expect an unencoded pipe in the pathname. Added a regression test covering both `raw_path` and `path` properties.",
+    "html_url": "https://github.com/encode/httpx/pull/3764",
+    "additions": 18,
+    "deletions": 2,
+    "changed_files": 3,
+    "merged_at": null
+  },
+  "pr_author": "Mr-Neutr0n",
+  "pr_head": "fix-pipe-encoding-in-path",
+  "pr_base": "master",
+  "owner": "encode",
+  "repo": "httpx",
+  "diff": "diff --git a/httpx/_urlparse.py b/httpx/_urlparse.py\nindex bf190fd560..9fadacd8de 100644\n--- a/httpx/_urlparse.py\n+++ b/httpx/_urlparse.py\n@@ -51,12 +51,15 @@\n )\n \n # The path percent-encode set is the query percent-encode set\n-# and U+003F (?), U+0060 (`), U+007B ({), and U+007D (}).\n+# and U+003F (?), U+0060 (`), U+007B ({), U+007C (|), and U+007D (}).\n+# We include U+007C (|) in the encode set to align with RFC 3986 and\n+# Python's stdlib, since | is not a valid pchar and can cause servers\n+# to issue redirects or reject requests when left unencoded.\n PATH_SAFE = \"\".join(\n     [\n         chr(i)\n         for i in range(0x20, 0x7F)\n-        if i not in (0x20, 0x22, 0x23, 0x3C, 0x3E) + (0x3F, 0x60, 0x7B, 0x7D)\n+        if i not in (0x20, 0x22, 0x23, 0x3C, 0x3E) + (0x3F, 0x60, 0x7B, 0x7C, 0x7D)\n     ]\n )\n \ndiff --git a/tests/models/test_url.py b/tests/models/test_url.py\nindex 03072e8f5c..0877b4a5c5 100644\n--- a/tests/models/test_url.py\n+++ b/tests/models/test_url.py\n@@ -140,6 +140,13 @@ def test_path_query_fragment(url, raw_path, path, query, fragment):\n     assert url.fragment == fragment\n \n \n+def test_url_pipe_encoding_in_path():\n+    # The pipe character should be percent-encoded in paths per RFC 3986.\n+    url = httpx.URL(\"https://example.com/path|segment\")\n+    assert url.raw_path == b\"/path%7Csegment\"\n+    assert url.path == \"/path|segment\"\n+\n+\n def test_url_query_encoding():\n     url = httpx.URL(\"https://www.example.com/?a=b c&d=e/f\")\n     assert url.raw_path == b\"/?a=b%20c&d=e/f\"\ndiff --git a/tests/models/test_whatwg.py b/tests/models/test_whatwg.py\nindex 14af682586..22d113a0e8 100644\n--- a/tests/models/test_whatwg.py\n+++ b/tests/models/test_whatwg.py\n@@ -27,6 +27,12 @@ def test_urlparse(test_case):\n         # Anyone know what's going on here?\n         return\n \n+    # We percent-encode \"|\" in paths (unlike WHATWG), to align with RFC 3986\n+    # and Python's stdlib. The pipe character is not a valid pchar and some\n+    # servers reject or redirect URLs containing an unencoded \"|\".\n+    if \"|\" in test_case.get(\"pathname\", \"\"):\n+        return\n+\n     p = urlparse(test_case[\"href\"])\n \n     # Test cases include the protocol with the trailing \":\"\n"
+}
